@@ -143,16 +143,63 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  
-  int steps = 0;
-  int init_freq = 40000;
-  int working_freq = 0;
-  
+
+  uint16_t steps = 0;
+  uint32_t init_freq = 40000;
+  uint32_t working_freq = 0;
+
+  uint32_t clock=64e6;
+  uint32_t prescaler=4;
+
+  uint16_t adc_read;
+  uint16_t adc_list[13];
+
+  uint16_t max_adc = 0;
+  uint16_t max_index = 0;
+
   while (1)
   {
-	if (steps != 13) {
-		working_freq = init_freq + steps*10000;
-		steps+=1;
+	if (steps < 13) {
+		working_freq = init_freq + steps * 10000;
+
+		uint32_t new_period =clock / (working_freq * prescaler);
+		uint32_t new_pulse = new_period / 2;
+
+		Set_PWM_Period(new_period);
+		Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+
+		HAL_Delay(100);
+
+		HAL_ADC_Start(&hadc1);
+		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+		{
+			adc_read = HAL_ADC_GetValue(&hadc1);
+			// Store ADC result at current frequency
+			adc_list[steps] = adc_read;
+		}
+
+		steps++;
+		HAL_Delay(900);
+	}
+
+	if (steps == 13) {
+		for (uint16_t i = 0; i < 13; i++)
+		{
+			if (adc_list[i] > max_adc)
+			{
+				max_adc = adc_list[i];
+				max_index = i;
+			}
+		}
+		uint32_t resonant_freq = init_freq + (max_index * 10000);
+		uint32_t resonant_period = clock / (resonant_freq * prescaler);
+		uint32_t resonant_pulse = resonant_period / 2;
+
+		Set_PWM_Period(resonant_period);
+		Set_PWM_Pulse(TIM_CHANNEL_1, resonant_pulse);
+		Set_PWM_Pulse(TIM_CHANNEL_2, resonant_pulse);
+		steps++;
 	}
 
     /* USER CODE END WHILE */
@@ -160,29 +207,27 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
 	//default period = 180, pulse = 90, dead time = 100
-	
-	//--------------------------FREQUENCY CALCULATION------------------------------------------
-	uint16_t clock=64e6;
-	uint16_t prescaler=4;
-	
-	uint16_t new_period   = 200;      /* your computed value */
-	uint16_t new_pulse    = 100; 	  /* example scaling, clamp to new_period */
-	uint8_t  new_deadtime = 100;      /* only rewrite if it actually changed */
-	
-	uint16_t frequency=(clock)/(new_period*prescaler);
 
-	if (new_pulse > new_period) new_pulse = new_period;
+	//--------------------------FREQUENCY CALCULATION------------------------------------------
+
+	/*
+
+	uint16_t new_period   = 200;      // your computed value
+	uint16_t new_pulse    = 100; 	  // example scaling, clamp to new_period
+
+	uint16_t frequency=(clock)/(new_period*prescaler);
 
 	Set_PWM_Period(new_period);
 	Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
 	Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
-	static uint8_t last_deadtime = 100; //keep this value at 100 
+	static uint8_t last_deadtime = 100; //keep this value at 100
 
 	if (new_deadtime != last_deadtime) {
 		Set_PWM_DeadTime(new_deadtime);
 	    last_deadtime = new_deadtime;
 	}
+
 
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_PollForConversion(&hadc1,20); //timeout = 20ms
@@ -194,6 +239,8 @@ int main(void)
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5, GPIO_PIN_SET);
 	}
 	HAL_Delay(200);
+	*/
+
   }
   /* USER CODE END 3 */
 }
