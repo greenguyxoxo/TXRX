@@ -67,6 +67,11 @@ static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
+void Set_PWM_Period(uint16_t period);
+void Set_PWM_Pulse(uint32_t channel, uint16_t pulse);
+
+void Set_PWM_DeadTime(uint8_t deadtime);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -138,12 +143,47 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+  int steps = 0;
+  int init_freq = 40000;
+  int working_freq = 0;
+  
   while (1)
   {
+	if (steps != 13) {
+		working_freq = init_freq + steps*10000;
+		steps+=1;
+	}
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+	//default period = 180, pulse = 90, dead time = 100
+	
+	//--------------------------FREQUENCY CALCULATION------------------------------------------
+	uint16_t clock=64e6;
+	uint16_t prescaler=4;
+	
+	uint16_t new_period   = 200;      /* your computed value */
+	uint16_t new_pulse    = 100; 	  /* example scaling, clamp to new_period */
+	uint8_t  new_deadtime = 100;      /* only rewrite if it actually changed */
+	
+	uint16_t frequency=(clock)/(new_period*prescaler);
+
+	if (new_pulse > new_period) new_pulse = new_period;
+
+	Set_PWM_Period(new_period);
+	Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+	Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+
+	static uint8_t last_deadtime = 100; //keep this value at 100 
+
+	if (new_deadtime != last_deadtime) {
+		Set_PWM_DeadTime(new_deadtime);
+	    last_deadtime = new_deadtime;
+	}
+
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_PollForConversion(&hadc1,20); //timeout = 20ms
 	val = HAL_ADC_GetValue(&hadc1);
@@ -277,6 +317,11 @@ static void MX_ADC1_Init(void)
   }
   /* USER CODE BEGIN ADC1_Init 2 */
 
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
   /* USER CODE END ADC1_Init 2 */
 
 }
@@ -303,7 +348,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 4-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 200;
+  htim1.Init.Period = 180;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -319,7 +364,7 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 110;
+  sConfigOC.Pulse = 90;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -428,6 +473,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -436,6 +485,35 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void Set_PWM_Period(uint16_t period)
+{
+    __HAL_TIM_SET_AUTORELOAD(&htim1, period);
+}
+
+void Set_PWM_Pulse(uint32_t channel, uint16_t pulse)
+{
+    __HAL_TIM_SET_COMPARE(&htim1, channel, pulse);
+}
+
+void Set_PWM_DeadTime(uint8_t deadtime)
+{
+    TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+    sBreakDeadTimeConfig.OffStateRunMode  = TIM_OSSR_DISABLE;
+    sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+    sBreakDeadTimeConfig.LockLevel        = TIM_LOCKLEVEL_OFF;
+    sBreakDeadTimeConfig.DeadTime         = deadtime;
+    sBreakDeadTimeConfig.BreakState       = TIM_BREAK_DISABLE;
+    sBreakDeadTimeConfig.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
+    sBreakDeadTimeConfig.BreakFilter      = 0;
+    sBreakDeadTimeConfig.Break2State      = TIM_BREAK2_DISABLE;
+    sBreakDeadTimeConfig.Break2Polarity   = TIM_BREAK2POLARITY_HIGH;
+    sBreakDeadTimeConfig.Break2Filter     = 0;
+    sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
+
+    HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig);
+}
 
 /* USER CODE END 4 */
 
