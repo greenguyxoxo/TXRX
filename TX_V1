@@ -144,6 +144,14 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
+  uint16_t sweep_resolution = 5000;
+  uint32_t max_freq = 160000;
+  uint32_t min_freq = 40000;
+  uint16_t reso = (max_freq-min_freq)/sweep_resolution + 1; //number of steps
+  int32_t adc_fft[100];
+  uint16_t adc_fft_c = 0;
+
+
   uint16_t steps = 0;
   uint32_t init_freq = 40000;
   uint32_t working_freq = 0;
@@ -152,39 +160,73 @@ int main(void)
   uint32_t prescaler=4;
 
   uint16_t adc_read;
-  uint16_t adc_list[13];
+  uint32_t adc_list[reso];
 
   uint16_t max_adc = 0;
   uint16_t max_index = 0;
 
+  uint32_t default_period = clock / (init_freq * prescaler);
+  uint32_t default_pulse = default_period / 2;
+
   while (1)
   {
-	if (steps < 13) {
-		working_freq = init_freq + steps * 10000;
 
-		uint32_t new_period =clock / (working_freq * prescaler);
+	  /*-------------------------------------------CLARIFYING COMMENTS-------------------------------------------------------------------
+	   * PWM period and pulse are set by two helper functions every time the frequency changes
+	   *
+	   * dead time never changes, it is not supposed to change, DO NOT CHANGE DEAD TIME VALUE
+	   * 	dead time function in STM32 timers is convoluted, it basically maps onto a new suitable value depending on the clock speed and PWM speed
+	   * 	and any other value other than the suitable value doesn't work, and ALSO it works on "ticks" and not time in microseconds
+	   *
+	   * raw_volt is the value of the ADC reading in MILLIVOLTS
+	   *
+	   * initial frequency sweep goes from 40kHz to 160kHz
+	   *
+	   *
+	   * frequency=(clock)/(new_period*prescaler);
+	   */
+	  //-------------------------------------------------END-----------------------------------------------------------------------------
+
+
+	 //initialize frequency sweep and find initial resonance
+
+	if ((steps < reso) && (sizeof(adc_fft) / sizeof(adc_fft[0]) == 100)) {
+		//if there are still steps remaining AND the ADC array is filled up, the sweep will move onto the next frequency
+		adc_list[steps] = average(adc_fft);
+
+		memset(adc_fft, 0, sizeof(adc_fft));
+		adc_fft_c = 0;
+
+		working_freq = min_freq + steps * sweep_resolution;
+
+		uint32_t new_period = clock / (working_freq * prescaler);
 		uint32_t new_pulse = new_period / 2;
 
 		Set_PWM_Period(new_period);
 		Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
 		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
-		HAL_Delay(100);
-
+		steps++;
+		HAL_Delay(50);
+	}
+	if ((sizeof(adc_fft) / sizeof(adc_fft[0]) < 100)) { //continually sample ADC values
+		uint32_t raw_volt = 0;
 		HAL_ADC_Start(&hadc1);
 		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
 		{
 			adc_read = HAL_ADC_GetValue(&hadc1);
-			// Store ADC result at current frequency
-			adc_list[steps] = adc_read;
+			raw_volt = rawToMV(adc_read); //in milli-volts
 		}
 
-		steps++;
-		HAL_Delay(900);
+		adc_fft[adc_fft_c] = raw_volt;
+		adc_fft_c++;
+		HAL_Delay(50);
 	}
 
-	if (steps == 13) {
-		for (uint16_t i = 0; i < 13; i++)
+
+	if (steps == reso) { //end of the frequency sweep loop
+		//if the number of counting steps has reached the maximum # of steps in the sweep
+		for (uint16_t i = 0; i < reso; i++)
 		{
 			if (adc_list[i] > max_adc)
 			{
@@ -192,7 +234,9 @@ int main(void)
 				max_index = i;
 			}
 		}
-		uint32_t resonant_freq = init_freq + (max_index * 10000);
+
+
+		uint32_t resonant_freq = init_freq + (max_index * sweep_resolution);
 		uint32_t resonant_period = clock / (resonant_freq * prescaler);
 		uint32_t resonant_pulse = resonant_period / 2;
 
@@ -202,44 +246,42 @@ int main(void)
 		steps++;
 	}
 
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
 	//default period = 180, pulse = 90, dead time = 100
 
-	//--------------------------FREQUENCY CALCULATION------------------------------------------
-
-	/*
-
-	uint16_t new_period   = 200;      // your computed value
-	uint16_t new_pulse    = 100; 	  // example scaling, clamp to new_period
-
-	uint16_t frequency=(clock)/(new_period*prescaler);
-
-	Set_PWM_Period(new_period);
-	Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
-	Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
-
-	static uint8_t last_deadtime = 100; //keep this value at 100
-
-	if (new_deadtime != last_deadtime) {
-		Set_PWM_DeadTime(new_deadtime);
-	    last_deadtime = new_deadtime;
-	}
 
 
-	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1,20); //timeout = 20ms
-	val = HAL_ADC_GetValue(&hadc1);
-	sprintf(msg, "Value: %hu \r\n", val);
-	HAL_UART_Transmit(&huart2,(uint8_t *)msg,strlen(msg), HAL_MAX_DELAY);
 
-	if (val<2000) {
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5, GPIO_PIN_SET);
-	}
-	HAL_Delay(200);
-	*/
+	/*-----------------------------------------TESTING ADC VALUES---------------------------------------------------------------
+		  Set_PWM_Period(default_period);
+		  Set_PWM_Pulse(TIM_CHANNEL_1, default_pulse);
+		  Set_PWM_Pulse(TIM_CHANNEL_2, default_pulse);
+
+		  HAL_ADC_Start(&hadc1);
+		  if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+		  {
+			  adc_read = HAL_ADC_GetValue(&hadc1);
+			  uint32_t raw_volt = rawToMV(adc_read);
+			  adc_list[steps] = raw_volt;
+		  }
+		  HAL_Delay(1000);
+
+		  if (adc_read > 18000) {
+			  uint32_t new_freq = 100000;
+
+			  uint32_t new_period = clock / (new_freq * prescaler);
+			  uint32_t new_pulse = new_period / 2;
+			  Set_PWM_Period(new_period);
+			  Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+			  Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+		  }
+		  HAL_Delay(500);
+		  */
+		  //-------------------------------------------------END-----------------------------------------------------------------------------
 
   }
   /* USER CODE END 3 */
@@ -560,6 +602,21 @@ void Set_PWM_DeadTime(uint8_t deadtime)
     sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
 
     HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig);
+}
+
+uint32_t rawToMV(uint32_t raw) //converts base ADC values into comprehensible voltage outputs
+{
+    return (raw * 3300UL) / 65535UL;
+}
+
+uint32_t average(uint32_t arr[]) {
+	uint32_t sum = 0;
+	uint16_t len = sizeof(arr) / sizeof(arr[0])
+	for (uint16_t i = 0 ; i < len; i++) {
+		sum = sum + arr[i];
+	}
+	return (sum/len);
+
 }
 
 /* USER CODE END 4 */
