@@ -71,6 +71,8 @@ void Set_PWM_Period(uint16_t period);
 void Set_PWM_Pulse(uint32_t channel, uint16_t pulse);
 
 void Set_PWM_DeadTime(uint8_t deadtime);
+uint32_t rawToMV(uint32_t raw);
+uint32_t average(uint32_t arr[], uint16_t len);
 
 /* USER CODE END PFP */
 
@@ -190,9 +192,9 @@ int main(void)
 
 	 //initialize frequency sweep and find initial resonance
 
-	if ((steps < reso) && (sizeof(adc_fft) / sizeof(adc_fft[0]) == 100)) {
+	if ((steps < reso) && (adc_fft_c == 100)) {
 		//if there are still steps remaining AND the ADC array is filled up, the sweep will move onto the next frequency
-		adc_list[steps] = average(adc_fft);
+		adc_list[steps] = average(adc_fft, 100);
 
 		memset(adc_fft, 0, sizeof(adc_fft));
 		adc_fft_c = 0;
@@ -207,9 +209,9 @@ int main(void)
 		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
 		steps++;
-		HAL_Delay(50);
+		HAL_Delay(2000);
 	}
-	if ((sizeof(adc_fft) / sizeof(adc_fft[0]) < 100)) { //continually sample ADC values
+	if (adc_fft_c < 100) { //continually sample ADC values
 		uint32_t raw_volt = 0;
 		HAL_ADC_Start(&hadc1);
 		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
@@ -220,7 +222,7 @@ int main(void)
 
 		adc_fft[adc_fft_c] = raw_volt;
 		adc_fft_c++;
-		HAL_Delay(50);
+		//HAL_Delay(50);
 	}
 
 
@@ -236,7 +238,7 @@ int main(void)
 		}
 
 
-		uint32_t resonant_freq = init_freq + (max_index * sweep_resolution);
+		uint32_t resonant_freq = min_freq + (max_index * sweep_resolution);
 		uint32_t resonant_period = clock / (resonant_freq * prescaler);
 		uint32_t resonant_pulse = resonant_period / 2;
 
@@ -609,9 +611,8 @@ uint32_t rawToMV(uint32_t raw) //converts base ADC values into comprehensible vo
     return (raw * 3300UL) / 65535UL;
 }
 
-uint32_t average(uint32_t arr[]) {
+uint32_t average(uint32_t arr[], uint16_t len) {
 	uint32_t sum = 0;
-	uint16_t len = sizeof(arr) / sizeof(arr[0])
 	for (uint16_t i = 0 ; i < len; i++) {
 		sum = sum + arr[i];
 	}
