@@ -154,12 +154,11 @@ int main(void)
   uint16_t reso = (max_freq-min_freq)/sweep_resolution + 1; //number of steps
 
   uint32_t fft_size = 1000;
-  int32_t adc_fft[fft_size];
+  uint32_t adc_fft[fft_size];
   uint16_t adc_fft_c = 0;
 
 
   uint16_t steps = 0;
-  uint32_t init_freq = 40000;
   uint32_t working_freq = 0;
 
   uint32_t clock=64e6;
@@ -170,8 +169,6 @@ int main(void)
 
   uint16_t max_adc = 0;
   uint16_t max_index = 0;
-
-  uint32_t default_period = clock / (init_freq * prescaler);
 
   uint16_t init = 0;
 
@@ -231,7 +228,7 @@ int main(void)
 		 	if (adc_fft_c < fft_size) { //continually sample ADC values
 		 		uint32_t raw_volt = 0;
 		 		HAL_ADC_Start(&hadc1);
-		 		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+		 		if (HAL_ADC_PollForConversion(&hadc1, 1) == HAL_OK)
 		 		{
 		 			adc_read = HAL_ADC_GetValue(&hadc1);
 		 			raw_volt = rawToMV(adc_read); //in milli-volts
@@ -274,7 +271,7 @@ int main(void)
 
 			  uint32_t raw_volt = 0;
 			  HAL_ADC_Start(&hadc1);
-			  if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+			  if (HAL_ADC_PollForConversion(&hadc1, 1) == HAL_OK)
 			  {
 				  adc_read = HAL_ADC_GetValue(&hadc1);
 				  raw_volt = rawToMV(adc_read); //in milli-volts
@@ -314,7 +311,7 @@ int main(void)
 			  Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
 			  last_read = current_read;
-			  HAL_Delay(50); //50 millisecond delay
+			  HAL_Delay(10); //10 millisecond delay
 
 
 		  }
