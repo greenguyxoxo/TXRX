@@ -72,7 +72,8 @@ void Set_PWM_Pulse(uint32_t channel, uint16_t pulse);
 
 void Set_PWM_DeadTime(uint8_t deadtime);
 uint32_t rawToMV(uint32_t raw);
-uint32_t average(uint32_t arr[], uint16_t len);
+uint32_t filter(uint32_t arr[], uint16_t len);
+int cmp_uint32(const void *a, const void *b);
 
 /* USER CODE END PFP */
 
@@ -147,10 +148,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
   uint16_t sweep_resolution = 5000;
-  uint32_t max_freq = 160000;
+  uint32_t max_freq = 110000;
   uint32_t min_freq = 40000;
   uint16_t reso = (max_freq-min_freq)/sweep_resolution + 1; //number of steps
-  int32_t adc_fft[100];
+
+  uint32_t fft_size = 1000;
+  int32_t adc_fft[fft_size];
   uint16_t adc_fft_c = 0;
 
 
@@ -169,6 +172,16 @@ int main(void)
 
   uint32_t default_period = clock / (init_freq * prescaler);
   uint32_t default_pulse = default_period / 2;
+
+  uint16_t init = 0;
+
+
+  uint32_t last_read = 0;
+  uint32_t current_read = 0;
+
+  uint32_t c_freq = 0;
+
+  uint32_t next_perturb = 1; //1 means go up, 0 means go down
 
   while (1)
   {
@@ -190,63 +203,119 @@ int main(void)
 	  //-------------------------------------------------END-----------------------------------------------------------------------------
 
 
-	 //initialize frequency sweep and find initial resonance
+	  if (init == 0) { //static resonance tracking
 
-	if ((steps < reso) && (adc_fft_c == 100)) {
-		//if there are still steps remaining AND the ADC array is filled up, the sweep will move onto the next frequency
-		adc_list[steps] = average(adc_fft, 100);
+		  //initialize frequency sweep and find initial resonance
 
-		memset(adc_fft, 0, sizeof(adc_fft));
-		adc_fft_c = 0;
+		 	if ((steps < reso) && (adc_fft_c == fft_size)) {
+		 		//if there are still steps remaining AND the ADC array is filled up, the sweep will move onto the next frequency
+		 		adc_list[steps] = filter(adc_fft, fft_size);
 
-		working_freq = min_freq + steps * sweep_resolution;
+		 		memset(adc_fft, 0, fft_size);
+		 		adc_fft_c = 0;
 
-		uint32_t new_period = clock / (working_freq * prescaler);
-		uint32_t new_pulse = new_period / 2;
+		 		working_freq = min_freq + steps * sweep_resolution;
 
-		Set_PWM_Period(new_period);
-		Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
-		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+		 		uint32_t new_period = clock / (working_freq * prescaler);
+		 		uint32_t new_pulse = new_period / 2;
 
-		steps++;
-		HAL_Delay(2000);
-	}
-	if (adc_fft_c < 100) { //continually sample ADC values
-		uint32_t raw_volt = 0;
-		HAL_ADC_Start(&hadc1);
-		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
-		{
-			adc_read = HAL_ADC_GetValue(&hadc1);
-			raw_volt = rawToMV(adc_read); //in milli-volts
-		}
+		 		Set_PWM_Period(new_period);
+		 		Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+		 		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
-		adc_fft[adc_fft_c] = raw_volt;
-		adc_fft_c++;
-		//HAL_Delay(50);
-	}
+		 		steps++;
+		 		HAL_Delay(500);
+		 	}
 
+		 	if (adc_fft_c < fft_size) { //continually sample ADC values
+		 		uint32_t raw_volt = 0;
+		 		HAL_ADC_Start(&hadc1);
+		 		if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+		 		{
+		 			adc_read = HAL_ADC_GetValue(&hadc1);
+		 			raw_volt = rawToMV(adc_read); //in milli-volts
+		 		}
 
-	if (steps == reso) { //end of the frequency sweep loop
-		//if the number of counting steps has reached the maximum # of steps in the sweep
-		for (uint16_t i = 0; i < reso; i++)
-		{
-			if (adc_list[i] > max_adc)
-			{
-				max_adc = adc_list[i];
-				max_index = i;
-			}
-		}
+		 		adc_fft[adc_fft_c] = raw_volt;
+		 		adc_fft_c++;
+		 		//HAL_Delay(50);
+		 	}
 
 
-		uint32_t resonant_freq = min_freq + (max_index * sweep_resolution);
-		uint32_t resonant_period = clock / (resonant_freq * prescaler);
-		uint32_t resonant_pulse = resonant_period / 2;
+		 	if (steps == reso) { //end of the frequency sweep loop
+		 		//if the number of counting steps has reached the maximum # of steps in the sweep
+		 		for (uint16_t i = 0; i < reso; i++)
+		 		{
+		 			if (adc_list[i] > max_adc)
+		 			{
+		 				max_adc = adc_list[i];
+		 				max_index = i;
+		 			}
+		 		}
 
-		Set_PWM_Period(resonant_period);
-		Set_PWM_Pulse(TIM_CHANNEL_1, resonant_pulse);
-		Set_PWM_Pulse(TIM_CHANNEL_2, resonant_pulse);
-		steps++;
-	}
+		 		uint32_t resonant_freq = min_freq + (max_index * sweep_resolution);
+		 		uint32_t resonant_period = clock / (resonant_freq * prescaler);
+		 		uint32_t resonant_pulse = resonant_period / 2;
+
+		 		Set_PWM_Period(resonant_period);
+		 		Set_PWM_Pulse(TIM_CHANNEL_1, resonant_pulse);
+		 		Set_PWM_Pulse(TIM_CHANNEL_2, resonant_pulse);
+		 		steps++;
+
+		 		memset(adc_fft, 0, fft_size);
+		 		adc_fft_c = 0;
+		 		last_read = adc_list[reso];
+		 		c_freq = resonant_freq;
+		 	}
+	  }
+	  else { //dynamic resonance tracking
+		  if (adc_fft_c < fft_size) { //continually sample ADC values
+
+			  uint32_t raw_volt = 0;
+			  HAL_ADC_Start(&hadc1);
+			  if (HAL_ADC_PollForConversion(&hadc1, 20) == HAL_OK)
+			  {
+				  adc_read = HAL_ADC_GetValue(&hadc1);
+				  raw_volt = rawToMV(adc_read); //in milli-volts
+			  }
+			  adc_fft[adc_fft_c] = raw_volt;
+			  adc_fft_c++;
+
+		  }
+
+		  if (adc_fft_c == fft_size) { //sample vector has filled up, now time for analysis and perturbation
+
+			  uint32_t step = 200;
+			  current_read = filter(adc_fft, fft_size);
+
+			  memset(adc_fft, 0, fft_size);
+			  adc_fft_c = 0;
+
+			  if (current_read <= last_read) {
+			      next_perturb = !next_perturb;
+			  }
+
+			  c_freq += next_perturb ? step : -step;
+
+
+
+			  uint32_t new_period = clock / (c_freq * prescaler);
+			  uint32_t new_pulse = new_period / 2;
+
+			  Set_PWM_Period(new_period);
+			  Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+			  Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+
+			  last_read = current_read;
+
+
+
+		  }
+
+	  }
+
+
+
 
 
     /* USER CODE END WHILE */
@@ -611,13 +680,29 @@ uint32_t rawToMV(uint32_t raw) //converts base ADC values into comprehensible vo
     return (raw * 3300UL) / 65535UL;
 }
 
-uint32_t average(uint32_t arr[], uint16_t len) {
+uint32_t filterAverage(uint32_t arr[], uint16_t len) {
 	uint32_t sum = 0;
 	for (uint16_t i = 0 ; i < len; i++) {
 		sum = sum + arr[i];
 	}
 	return (sum/len);
 
+}
+
+int cmp_uint32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a;
+    uint32_t y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+
+uint32_t filter(uint32_t arr[], uint16_t len) {
+    if (len == 0) return 0;
+
+    uint32_t sorted[len];
+    memcpy(sorted, arr, len * sizeof(uint32_t));
+    qsort(sorted, len, sizeof(uint32_t), cmp_uint32);
+
+    return sorted[len / 2]; // median
 }
 
 /* USER CODE END 4 */
