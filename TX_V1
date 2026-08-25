@@ -264,6 +264,7 @@ int main(void)
 		 		adc_fft_c = 0;
 		 		last_read = adc_list[reso];
 		 		c_freq = resonant_freq;
+				init = 1;
 		 	}
 	  }
 	  else { //dynamic resonance tracking
