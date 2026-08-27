@@ -153,7 +153,7 @@ int main(void)
   uint32_t min_freq = 40000;
   uint16_t reso = (max_freq-min_freq)/sweep_resolution + 1; //number of steps
 
-  uint32_t fft_size = 1000;
+  uint32_t fft_size = 2000;
   uint32_t adc_fft[fft_size];
   uint16_t adc_fft_c = 0;
 
@@ -179,6 +179,8 @@ int main(void)
   uint32_t c_freq = 0;
 
   uint32_t next_perturb = 1; //1 means go up, 0 means go down
+
+  uint32_t threshold = 0; //threshold marks when the algorithm should go back to frequency sweep
   double invscale = 0.5;
 
   while (1)
@@ -205,25 +207,25 @@ int main(void)
 
 		  //initialize frequency sweep and find initial resonance
 
-		 	if ((steps < reso) && (adc_fft_c == fft_size)) {
-		 		//if there are still steps remaining AND the ADC array is filled up, the sweep will move onto the next frequency
-		 		adc_list[steps] = filter(adc_fft, fft_size);
+		  if ((steps < reso) && (adc_fft_c == fft_size)) {
+		      current_read = filter(adc_fft, fft_size);
+		      adc_list[steps] = current_read;          // just use the median-filtered value directly
 
-		 		memset(adc_fft, 0, fft_size);
-		 		adc_fft_c = 0;
+		      memset(adc_fft, 0, fft_size);
+		      adc_fft_c = 0;
 
-		 		working_freq = min_freq + steps * sweep_resolution;
+		      working_freq = min_freq + steps * sweep_resolution;
 
-		 		uint32_t new_period = clock / (working_freq * prescaler);
-		 		uint32_t new_pulse = new_period / 2;
+		      uint32_t new_period = clock / (working_freq * prescaler);
+		      uint32_t new_pulse = new_period / 2;
 
-		 		Set_PWM_Period(new_period);
-		 		Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
-		 		Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
+		      Set_PWM_Period(new_period);
+		      Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
+		      Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
-		 		steps++;
-		 		HAL_Delay(500);
-		 	}
+		      steps++;
+		      HAL_Delay(1000);
+		  }
 
 		 	if (adc_fft_c < fft_size) { //continually sample ADC values
 		 		uint32_t raw_volt = 0;
@@ -236,11 +238,13 @@ int main(void)
 
 		 		adc_fft[adc_fft_c] = raw_volt;
 		 		adc_fft_c++;
+
 		 		//HAL_Delay(50);
 		 	}
 
 
 		 	if (steps == reso) { //end of the frequency sweep loop
+		 		steps = 0;
 		 		//if the number of counting steps has reached the maximum # of steps in the sweep
 		 		for (uint16_t i = 0; i < reso; i++)
 		 		{
@@ -258,15 +262,16 @@ int main(void)
 		 		Set_PWM_Period(resonant_period);
 		 		Set_PWM_Pulse(TIM_CHANNEL_1, resonant_pulse);
 		 		Set_PWM_Pulse(TIM_CHANNEL_2, resonant_pulse);
-		 		steps++;
+		 		//steps++;
 
 		 		memset(adc_fft, 0, fft_size);
 		 		adc_fft_c = 0;
-		 		last_read = adc_list[reso];
+		 		last_read = adc_list[max_index];
 		 		c_freq = resonant_freq;
-				init = 1;
+		 		init = 1;
 		 	}
 	  }
+
 	  else { //dynamic resonance tracking
 		  if (adc_fft_c < fft_size) { //continually sample ADC values
 
@@ -286,38 +291,63 @@ int main(void)
 			  adc_fft_c = 0;
 
 			  current_read = filter(adc_fft, fft_size);
+			  static uint32_t smoothed_read = 0;
 
-			  memset(adc_fft, 0, fft_size);
 
-			  if (current_read <= last_read) {
+			  uint8_t smoothed_initialized = 0;
+
+			  if (smoothed_initialized == 0) {
+			      smoothed_read = current_read;   // seed with first real reading, not 0
+			      smoothed_initialized = 1;
+			  } else {
+			      smoothed_read = smoothed_read + ((int32_t)current_read - (int32_t)smoothed_read) / 4;
+			  }
+
+			  if (smoothed_read < threshold) {
+			      init = 0;
+			      steps = 0;
+			      max_adc = 0;
+			      memset(adc_list, 0, sizeof(adc_list));
+			  }
+
+
+
+			  if (smoothed_read <= last_read) {
 			      next_perturb = !next_perturb;
 			  }
 
 			  uint32_t diff;
 
-			  if (current_read >= last_read)
-			      diff = current_read - last_read;
+			  if (smoothed_read >= last_read)
+			      diff = smoothed_read - last_read;
 			  else
-			      diff = last_read - current_read;
+			      diff = last_read - smoothed_read;
 
-			  c_freq += next_perturb ? ((diff+1)/(invscale)) : ((diff+1)/(invscale));
+			  //int32_t step = (int32_t)((diff + 1) / invscale);
+			  int32_t step = 500;
+			  if (next_perturb) {
+				  if ((c_freq + (uint32_t)step) >= max_freq) c_freq = max_freq; //guard against overflow
+				  else c_freq += step;
+			  } else {
+			      if ((uint32_t)step > c_freq) c_freq = min_freq; // guard against underflow
+			      else c_freq -= step;
+			  }
 
-
-
-			  uint32_t new_period = clock / (c_freq * prescaler);
-			  uint32_t new_pulse = new_period / 2;
+			  uint32_t new_period = (clock + (c_freq * prescaler) - 1) / (c_freq * prescaler);
+			  uint32_t new_pulse  = (new_period + 1) / 2;
 
 			  Set_PWM_Period(new_period);
 			  Set_PWM_Pulse(TIM_CHANNEL_1, new_pulse);
 			  Set_PWM_Pulse(TIM_CHANNEL_2, new_pulse);
 
-			  last_read = current_read;
+			  last_read = smoothed_read;
+			  memset(adc_fft, 0, fft_size);
 			  HAL_Delay(10); //10 millisecond delay
-
 
 		  }
 
 	  }
+
 
 
 
